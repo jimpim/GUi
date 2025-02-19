@@ -18,7 +18,7 @@ import dynamic_window_approach_paper as dwa_mod
 class MyGui(QWidget):
     def __init__(self):
         super().__init__()
-
+ 
         self.setGeometry(100, 100, 900, 600)
         self.setWindowTitle("DWA + A* (Matplotlib)")
 
