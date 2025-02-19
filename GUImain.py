@@ -6,23 +6,34 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QImage
-# Matplotlib imports for embedding in PyQt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
-
 import os
 import a_star
 import dynamic_window_approach_paper as dwa_mod
+import vessel_saver
+from datetime import datetime
+import imazu1
 
+def get_first_coord(coord):
+    """
+    If coord is a sequence (list, tuple, or numpy array), return its first element.
+    Otherwise, return the coord itself.
+    """
+    if isinstance(coord, (list, tuple, np.ndarray)):
+        return coord[0]
+    return coord
 
 class MyGui(QWidget):
     def __init__(self):
         super().__init__()
- 
+
         self.setGeometry(100, 100, 900, 600)
         self.setWindowTitle("DWA + A* (Matplotlib)")
 
-        # Create the main layout
+
+
+        # Create the main layout.
         self.main_layout = QHBoxLayout(self)
 
         # -- Matplotlib Figure and Canvas --
@@ -32,13 +43,11 @@ class MyGui(QWidget):
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.set_xlim(0, 100)
         self.ax.set_ylim(0, 100)
-
-        # Add the Matplotlib canvas to the layout
         self.main_layout.addWidget(self.canvas)
+     
 
         # -- Right panel for buttons/controls --
         self.right_panel = QVBoxLayout()
-
         self.start_btn = QPushButton("Start DWA", self)
         self.pause_btn = QPushButton("Pause/Resume", self)
         self.map_select_btn = QComboBox(self)
@@ -46,64 +55,137 @@ class MyGui(QWidget):
         self.selected_map = self.map_select_btn.currentText()
         self.status_label = QLabel("Select map and click 'Start DWA' to begin.", self)
         self.status_label.setAlignment(Qt.AlignCenter)
-
+        self.mode_select_btn = QComboBox(self)
+        self.mode_select_btn.addItems(["AIS","Imazu 1"])
+        self.mode_selected = self.mode_select_btn.currentText()
         self.right_panel.addWidget(self.start_btn)
         self.right_panel.addWidget(self.pause_btn)
         self.right_panel.addWidget(self.map_select_btn)
+        self.right_panel.addWidget(self.mode_select_btn)
         self.right_panel.addWidget(self.status_label)
-        self.right_panel.addStretch(1)  # Push everything up
-
+        self.right_panel.addStretch(1)
         self.main_layout.addLayout(self.right_panel)
         self.setLayout(self.main_layout)
 
-        # Timer
+        # Timer (updates every 100 ms).
         self.timer = QTimer()
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.update_step)
 
-        # DWA Variables
+        # DWA variables.
         self.dwa_handler = None
         self.is_running = False
 
-        # Obstacles
-        self.obstacles = np.array([
-            [0, 3], [0, 2], [4, 2], [5, 4], [5, 5], [5, 6],
-            [5, 9], [8, 9], [7, 9], [8, 10], [9, 11], [12, 12]
-        ]).astype(float)
+        # Define the start and goal positions for the robot.
+        self.start_pos = (80.0, 100.0)
+        self.goal_pos = (80.0, 60.0)
 
-        # Give them random small velocities
-        np.random.seed(0)
-        self.obstacle_vels = 0.02 * (np.random.rand(*self.obstacles.shape) - 0.5)
+        # Modified vessel data handling.
+        self.data_from_file = vessel_saver.load_vessel_data('filtered_vessels')
+        self.vessel_groups = {}   # Dictionary to store vessels grouped by timestamp
+        self.active_vessels = {}  # Dictionary to track currently active vessels (accumulated)
+        self.current_time = 0     # Track simulation time
+        self.next_spawn_time = 10 # Time until next vessel group (in seconds)
 
-        # Start & Goal Positions
-        self.start_pos = (2.0, 2.0)
-        self.goal_pos = (80.0, 80.0)
+        self.imazu_data = imazu1.get_data()
 
-        # Matplotlib artists (initialize them empty; we'll set data later)
-        # Background image will be shown via imshow
-        self.background_image = None
+        self.raw_vessel_data = self.data_from_file
 
-        # Obstacles
-        self.obstacle_plot = self.ax.scatter([], [], c='k', s=6)
 
-        # Robot
-        self.robot_plot = self.ax.scatter([], [], c='r', s=10)
+        # Create a dictionary to count IMO occurrences
+        imo_count = {}
+        for vessel in self.raw_vessel_data:
+            imo = str(vessel[0])  # Convert IMO to string for consistency
+            imo_count[imo] = imo_count.get(imo, 0) + 1
 
-        # Path line
-        self.path_line, = self.ax.plot([], [], color='r', linewidth=2)
+            # Print any duplicates found
+            duplicates = {imo: count for imo, count in imo_count.items() if count > 1}
+            # if duplicates:
+            #     print("Found duplicate IMO numbers:")
+            #     for imo, count in duplicates.items():
+            #         print(f"IMO {imo} appears {count} times")
+            # else:
+            #     print("No duplicate IMO numbers found")
 
-        # Start/Goal markers
+        # Filter out duplicate vessels: keep only the first record per unique IMO
+        # unique_vessels = []
+        # for vessel in self.raw_vessel_data:
+        #     imo = vessel[0]
+
+        #     for i in imo:
+        #         if i not in unique_vessels:
+        #             index = imo.index(i)
+        #             for lst in vessel:
+        #                 del lst[index]
+        #     unique_vessels+= vessel
+        # # print(self.raw_vessel_data[:3])
+        # print(self.vessel_data[:3])
+
+    # Initialize a set to track seen IMOs and a list for unique vessels
+        seen_imos = set()
+        unique_vessels = []
+
+        for record in self.raw_vessel_data:
+            # Number of vessels in this record
+            num_vessels = len(record[0])
+            
+            # Temporary lists for the current record's unique vessels
+            imolst = []
+            timestamp_list = []
+            x_coords = []
+            y_coords = []
+            speed = []
+            direction = []
+            file_no = []
+            
+            for i in range(num_vessels):
+                current_imo = str(record[0][i])
+                # If we haven't seen this IMO before, add its data
+                if current_imo not in seen_imos:
+                    seen_imos.add(current_imo)
+                    imolst.append(current_imo)
+                    timestamp_list.append(record[1][i])
+                    x_coords.append(record[2][i])
+                    y_coords.append(record[3][i])
+                    speed.append(record[4][i])
+                    direction.append(record[5][i])
+                    file_no.append(record[6][i])
+                    
+            # Only append non-empty records
+            if imolst:
+                unique_vessels.append((imolst, timestamp_list, x_coords, y_coords, speed, direction, file_no))
+
+        self.vessel_data = unique_vessels
+
+        # print(self.raw_vessel_data[:3])
+        # print(self.vessel_data[:3])
+
+        
+
+        # Group vessels by their timestamps.
+        self.group_vessels_by_file()
+        # Create a sorted list of timestamps (group keys).
+        self.sorted_file = sorted(self.vessel_groups.keys())
+        # Keep track of which group index we are up to.
+        self.current_group_index = 0
+
+        # Introduce the first group of vessels.
+        self.introduce_initial_vessels()
+
+        # Matplotlib artists.
+        self.background_image = None  # for the background image
+        self.vessel_plot = self.ax.scatter([], [], c='k', s=20)  # vessel obstacles
+        self.robot_plot = self.ax.scatter([], [], c='r', s=20, marker = 's')    # robot position
+        self.path_line, = self.ax.plot([], [], color='b', linewidth=2)  # robot path
         self.start_marker = self.ax.scatter([], [], c='g', s=60, marker='o')
         self.goal_marker = self.ax.scatter([], [], c='b', s=60, marker='x')
 
-        # Connect Button Clicks
+        # Connect button clicks.
         self.start_btn.clicked.connect(self.on_start_dwa)
         self.pause_btn.clicked.connect(self.on_pause_resume)
 
-        # Load background image (optional, adjust path and alpha as needed)
+        # Load the background image (if available).
         self.load_background_image("map.png")
-
-        # Initialize graph with obstacles & markers
         self.update_graph()
 
     ########################################################################
@@ -112,47 +194,35 @@ class MyGui(QWidget):
     def load_background_image(self, img_path="map.png"):
         """Load and display the background image using matplotlib imshow."""
         try:
-            # Get the directory of the current script
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            # Construct full path to map.png
             full_path = os.path.join(script_dir, img_path)
-            
+
             qimg = QImage(full_path)
             if qimg.isNull():
                 raise FileNotFoundError(f"Image not found at {full_path}")
 
-            # Convert QImage to numpy array more safely
             width = qimg.width()
             height = qimg.height()
             ptr = qimg.constBits()
-            ptr.setsize(height * width * 4)  # 4 bytes per pixel for ARGB32
+            ptr.setsize(height * width * 4)  # 4 bytes per pixel (ARGB32)
             img_array = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
-
-            # Flip image vertically to match conventional axes
             img_array = np.flipud(img_array)
 
-            # Convert from ARGB to RGBA if needed (matplotlib expects RGBA)
-            # You may need to reorder the channels depending on your QImage
-            # but in many cases, ARGB -> RGBA is just a shift of channels.
-            # Check your specific QImage format if the colors look off.
-            # For simplicity, let's do a direct copy of the first 3 channels (RGB)
-            # and the 4th channel (alpha). If you see color mismatch, revisit channel order.
+            # Convert ARGB to RGBA (matplotlib expects RGBA).
             rgba_img = np.zeros_like(img_array)
             rgba_img[..., 0] = img_array[..., 2]  # R
             rgba_img[..., 1] = img_array[..., 1]  # G
             rgba_img[..., 2] = img_array[..., 0]  # B
             rgba_img[..., 3] = img_array[..., 3]  # A
 
-            # Plot it with imshow, setting an extent that matches your domain
-            self.background_image = self.ax.imshow(rgba_img,
-                                                   extent=(0, 100, 0, 100),
-                                                   alpha=1.0,
-                                                   origin='lower')
-
-            # Set the figure and axes background to be transparent
+            self.background_image = self.ax.imshow(
+                rgba_img,
+                extent=(0, 100, 0, 100),
+                alpha=1.0,
+                origin='lower'
+            )
             self.figure.patch.set_facecolor('none')
             self.ax.set_facecolor('none')
-            
             self.ax.set_xlim(0, 100)
             self.ax.set_ylim(0, 100)
             self.canvas.draw()
@@ -161,56 +231,105 @@ class MyGui(QWidget):
             print(f"Error: {e}")
 
     ########################################################################
-    # Move Obstacles
-    ########################################################################
-    def move_obstacles(self):
-        """Moves obstacles randomly within the defined range, bouncing if out of bounds."""
-        self.obstacles += self.obstacle_vels
-
-        # Bounce obstacles back if they hit boundaries
-        for i in range(len(self.obstacles)):
-            x, y = self.obstacles[i]
-            if x < 0 or x > 100:
-                self.obstacle_vels[i, 0] *= -1
-            if y < 0 or y > 100:
-                self.obstacle_vels[i, 1] *= -1
-
-    ########################################################################
     # Update Graph Elements
     ########################################################################
     def update_graph(self):
-        """Updates all graph elements (obstacles, start, goal, etc.) in Matplotlib."""
-        # Obstacles
-        self.obstacle_plot.set_offsets(self.obstacles)
+        """Update the vessel obstacles and start/goal markers."""
+        if self.active_vessels:  # Only proceed if there are active vessels
+            current_positions = np.array([
+            (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
+            for vessel in self.active_vessels.values()
+        ])
+            # for vessel in self.active_vessels.values():
+            #     x = get_first_coord(vessel[2])  # x coordinate
+            #     y = get_first_coord(vessel[3])  # y coordinate
+            #     current_positions.append([x, y])
+            
+            current_positions = np.array(current_positions)
+            print(f"Plotting {len(current_positions)} vessels")
+            
+            self.vessel_plot.set_offsets(current_positions)
+            self.start_marker.set_offsets([self.start_pos])
+            self.goal_marker.set_offsets([self.goal_pos])
+            self.ax.set_xlim(0, 100)
+            self.ax.set_ylim(0, 100)
+            self.canvas.draw()
 
-        # Start/Goal
-        self.start_marker.set_offsets([self.start_pos])
-        self.goal_marker.set_offsets([self.goal_pos])
+    ########################################################################
+    # Timer Callback (Simulation Step)
+    ########################################################################
+    def update_step(self):
+        if not self.is_running or self.dwa_handler is None:
+            return
 
-        # Set domain
-        self.ax.set_xlim(0, 100)
-        self.ax.set_ylim(0, 100)
+        # Update simulation time
+        dt = self.timer.interval() / 1000.0  # dt in seconds
+        self.current_time += dt
 
-        # Redraw
-        self.canvas.draw()
+        # Check if it's time to introduce new vessels
+        if self.current_time >= self.next_spawn_time:
+            print(f"Current time: {self.current_time}, spawning new vessels")
+            self.introduce_new_vessels()
+            self.next_spawn_time += 10  # Set time for the next spawn
+
+        # Update positions of active vessels
+        self.move_obstacles()
+
+        # Extract current positions of active vessels
+        current_obstacles = np.array([
+            (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
+            for vessel in self.active_vessels.values()
+        ])
+        
+        
+        if len(current_obstacles) > 0:  # Only update if there are obstacles
+            # Update DWA obstacles.
+            self.dwa_handler.ob = current_obstacles
+            
+            # Execute one DWA step.
+            x, reached = self.dwa_handler.step()
+            # Update the robot's position and its trajectory.
+            self.robot_plot.set_offsets([[x[0], x[1]]])
+            traj_arr = np.array(self.dwa_handler.trajectory)
+            if traj_arr.size > 0:
+                self.path_line.set_data(traj_arr[:, 0], traj_arr[:, 1])
+
+            # Update the vessel (obstacle) plot.
+            self.vessel_plot.set_offsets(current_obstacles)
+            self.canvas.draw()
+
+            # Check if the goal has been reached.
+            if reached:
+                self.status_label.setText("Goal reached!")
+                self.is_running = False
+                self.timer.stop()
 
     ########################################################################
     # Button Callbacks
     ########################################################################
     def on_start_dwa(self):
+        # Use the initial positions (first coordinates) for each vessel.
+        current_obstacles = np.array([
+            (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
+            for vessel in self.active_vessels.values()
+        ])
+        print("Initial vessel obstacles:", current_obstacles)
+
+        # Define start and goal positions.
         sx, sy = self.start_pos
         gx, gy = self.goal_pos
 
+        # Run A* using the current vessel positions.
         rx, ry = a_star.run_a_star(
-            ob=self.obstacles, sx=sx, sy=sy, gx=gx, gy=gy,
-            resolution=1.0, robot_radius=0.1
+            ob=current_obstacles, sx=sx, sy=sy, gx=gx, gy=gy,
+            resolution=1.0, robot_radius=3
         )
 
+        # Initialize DWA with the current obstacles.
         x_init = [sx, sy, math.radians(15), 0.0, 0.0]
         goal = [gx, gy]
-
         self.dwa_handler = dwa_mod.DWAHandler(
-            x_init=x_init, goal=goal, ob=self.obstacles
+            x_init=x_init, goal=goal, ob=current_obstacles
         )
 
         self.is_running = True
@@ -229,48 +348,92 @@ class MyGui(QWidget):
                 self.status_label.setText("DWA running...")
 
     ########################################################################
-    # Timer Callback (Simulation Step)
+    # Vessel Grouping and Introduction
     ########################################################################
-    def update_step(self):
-        if not self.is_running or self.dwa_handler is None:
-            return
+    
+    def group_vessels_by_file(self):
+        """Group vessels by their actual timestamps,
+        saving each vessel individually under its own IMO.
+        Assumes each element in self.raw_vessel_data is a tuple of lists,
+        where each list holds one attribute for multiple vessels.
+        """
+        for record in self.vessel_data:
+            # Determine the group key.
+            # Here we assume all entries in record[6] are the same for this record,
+            # so we use get_first_coord on the whole list.
+            group_key = get_first_coord(record[6])
+            if group_key not in self.vessel_groups:
+                self.vessel_groups[group_key] = {}
+            
+            # Determine how many vessels are in this record.
+            # (We assume all attribute lists in the tuple are of the same length.)
+            num_vessels = len(record[0])
+            
+            # For each vessel in this record, create a vessel-specific data tuple
+            # and save it using its IMO as the key.
+            for i in range(num_vessels):
+                imo = str(record[0][i])
+                # Construct a tuple where each element is the i-th entry from the corresponding attribute list.
+                vessel_data = tuple(attribute[i] for attribute in record)
+                self.vessel_groups[group_key][imo] = vessel_data
 
-        # Move obstacles first
-        self.move_obstacles()
+        # Debug print: iterate over groups and print the number of vessels per group.
+        for group, vessels in self.vessel_groups.items():
+            print(f"Group {group}: {len(vessels)} vessels")
 
-        # Update the obstacle array in DWA
-        self.dwa_handler.ob = self.obstacles
 
-        # Perform one DWA step
-        x, reached = self.dwa_handler.step()
+    def introduce_initial_vessels(self):
+        """Introduce the first group of vessels."""
+        if self.sorted_file:
+            first_file = self.sorted_file[0]
+            first_group = self.vessel_groups[first_file]
+            # Accumulate the first group.
+            self.active_vessels.update({imo: vessel for imo, vessel in first_group.items()})
+            print(f"Initialized with {len(self.active_vessels)} vessels from file {first_file}")
 
-        # Update Robot position
-        self.robot_plot.set_offsets([[x[0], x[1]]])
+    def introduce_new_vessels(self):
+        """Introduce new vessels from the next group and accumulate them."""
+        self.current_group_index += 1
+        if self.current_group_index < len(self.sorted_file):
+            next_file = self.sorted_file[self.current_group_index]
+            new_vessels = self.vessel_groups[next_file]
+            print(f"Introducing vessels from timestamp {next_file}")
+            print(f"Number of vessels in new group: {len(new_vessels)}")
+            
+            # Accumulate the new vessels with the previously active ones.
+            self.active_vessels.update(new_vessels)
+            print(f"Total active vessels after accumulation: {len(self.active_vessels)}")
+        else:
+            print("No more vessel groups to display.")
+            # Optionally, you could reset the index to loop again.
+            # self.current_group_index = 0
 
-        # Update path line
-        traj_arr = np.array(self.dwa_handler.trajectory)
-        if len(traj_arr) > 0:
-            self.path_line.set_data(traj_arr[:, 0], traj_arr[:, 1])
-
-        # Update the obstacles
-        self.obstacle_plot.set_offsets(self.obstacles)
-
-        # Redraw the canvas
-        self.canvas.draw()
-
-        # Check if goal is reached
-        if reached:
-            self.status_label.setText("Goal reached!")
-            self.is_running = False
-            self.timer.stop()
-
+    ########################################################################
+    # Update Vessel Positions
+    ########################################################################
+    def move_obstacles(self):
+        """Update positions of active vessels."""
+        dt = self.timer.interval() / 1000.0
+        
+        for imo, vessel in list(self.active_vessels.items()):
+            imo, timestamp, x, y, speed, direction, file_no = vessel
+            x_scalar = get_first_coord(x)
+            y_scalar = get_first_coord(y)
+            speed_scalar = get_first_coord(speed)
+            direction_scalar = get_first_coord(direction)
+            file = get_first_coord(file_no)
+            
+            new_x = x_scalar + speed_scalar*0.1 * math.cos(direction_scalar) * dt
+            new_y = y_scalar + speed_scalar*0.1 * math.sin(direction_scalar) * dt
+            
+            # Update the vessel's position in active_vessels.
+            self.active_vessels[str(imo)] = [imo, timestamp, new_x, new_y, speed_scalar, direction_scalar, file]
 
 def main():
     app = QApplication(sys.argv)
     gui = MyGui()
     gui.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
