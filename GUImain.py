@@ -2,7 +2,7 @@ import sys
 import math
 import numpy as np
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QPushButton, QLabel, QComboBox, QHBoxLayout, QVBoxLayout
+    QApplication, QWidget, QPushButton, QLabel, QComboBox, QHBoxLayout, QVBoxLayout, QLineEdit
 )
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QImage
@@ -11,9 +11,12 @@ import matplotlib.pyplot as plt
 import os
 import a_star
 import dynamic_window_approach_paper as dwa_mod
+import map_generator
+import vessel_filter
+import lonlat_converter
 import vessel_saver
-from datetime import datetime
-import imazu1
+
+
 
 def get_first_coord(coord):
     """
@@ -24,18 +27,41 @@ def get_first_coord(coord):
         return coord[0]
     return coord
 
+
 class MyGui(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setGeometry(100, 100, 900, 600)
-        self.setWindowTitle("DWA + A* (Matplotlib)")
+        new_width = self.width()
+        new_height = self.height()
 
+        self.original_width = 1200
+        self.original_height = 700
 
+        # Calculate scale factors
+        self.scale_x = new_width / self.original_width
+        self.scale_y = new_height / self.original_height
 
-        # Create the main layout.
-        self.main_layout = QHBoxLayout(self)
+        self.min_lat = 1.13
+        self.max_lat = 1.22
+        self.min_lon = 103.75
+        self.max_lon = 103.85
 
+        self.original_width = 1200
+        self.original_height = 700
+
+        # Set initial window size and title
+        self.setGeometry(100, 100, self.original_width, self.original_height)
+        self.setWindowTitle("Welcome to CDCA testing platform")
+
+        # Initialize scaling factors
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+
+        # Initialize widgets
+        self.init_ui()
+
+    def init_ui(self):
         # -- Matplotlib Figure and Canvas --
         self.figure = plt.Figure()
         self.canvas = FigureCanvas(self.figure)
@@ -43,29 +69,84 @@ class MyGui(QWidget):
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.set_xlim(0, 100)
         self.ax.set_ylim(0, 100)
-        self.main_layout.addWidget(self.canvas)
-     
 
-        # -- Right panel for buttons/controls --
-        self.right_panel = QVBoxLayout()
-        self.start_btn = QPushButton("Start DWA", self)
+        self.canvas.setParent(self)  # Manually manage it
+
+        # -- Manually Positioned Right-Side Widgets --
+        self.start_btn = QPushButton("Start", self)
         self.pause_btn = QPushButton("Pause/Resume", self)
+
+        self.map_label = QLabel("Map Selection By Region Or Lon/Lat",self)
+        self.map_fixed_label = QLabel("Select Map By Region",self)
         self.map_select_btn = QComboBox(self)
-        self.map_select_btn.addItems(["Tuas", "Singapore Straits"])
-        self.selected_map = self.map_select_btn.currentText()
+        self.map_select_btn.addItems(["","Singapore Straits","Imazu Map"])
+        self.lon_label = QLabel("Enter Longitude Range",self)
+        self.lon_min_input = QLineEdit(self)
+        self.lon_min_input.setPlaceholderText("Min Lon")
+        self.lon_max_input = QLineEdit(self)
+        self.lon_max_input.setPlaceholderText("Max Lon")
+
+        self.latlon_label = QLabel("Select Map By Lon/Lat",self)
+        self.lat_label = QLabel("Enter Latitude Range",self)
+        self.lat_min_input = QLineEdit(self)
+        self.lat_min_input.setPlaceholderText("Min Lat")
+        self.lat_max_input = QLineEdit(self)
+        self.lat_max_input.setPlaceholderText("Max Lat")
+
+        self.mode_label = QLabel("Select Mode",self)
+        self.mode_select_btn = QComboBox(self)
+        self.mode_select_btn.addItems(["", "AIS", "Imazu 1"])
         self.status_label = QLabel("Select map and click 'Start DWA' to begin.", self)
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.mode_select_btn = QComboBox(self)
-        self.mode_select_btn.addItems(["AIS","Imazu 1"])
-        self.mode_selected = self.mode_select_btn.currentText()
-        self.right_panel.addWidget(self.start_btn)
-        self.right_panel.addWidget(self.pause_btn)
-        self.right_panel.addWidget(self.map_select_btn)
-        self.right_panel.addWidget(self.mode_select_btn)
-        self.right_panel.addWidget(self.status_label)
-        self.right_panel.addStretch(1)
-        self.main_layout.addLayout(self.right_panel)
-        self.setLayout(self.main_layout)
+
+        
+
+        # Connect signals
+        self.map_select_btn.currentIndexChanged.connect(self.map_changed)
+        self.lon_min_input.returnPressed.connect(self.lon_max_input.setFocus)
+        self.lon_max_input.returnPressed.connect(self.lat_min_input.setFocus)
+        self.lat_min_input.returnPressed.connect(self.lat_max_input.setFocus)
+        self.lat_max_input.returnPressed.connect(self.map_changed)
+        self.map_select_btn.currentIndexChanged.connect(self.map_changed)
+        self.mode_select_btn.currentIndexChanged.connect(self.mode_changed)
+
+        # Update widget positions and sizes
+        self.update_widget_geometry()
+
+    def update_widget_geometry(self):
+        # Update canvas position and size
+        self.canvas.setGeometry(int(275 * self.scale_x), int(20 * self.scale_y), int(650 * self.scale_x), int(650 * self.scale_y))
+
+        # Update button positions and sizes
+        self.start_btn.setGeometry(int(950 * self.scale_x), int(50 * self.scale_y), int(180 * self.scale_x), int(40 * self.scale_y))
+        self.pause_btn.setGeometry(int(950 * self.scale_x), int(100 * self.scale_y), int(180 * self.scale_x), int(40 * self.scale_y))
+        self.map_label.setGeometry(int(50 * self.scale_x), int(55 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.map_fixed_label.setGeometry(int(50 * self.scale_x), int(100 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.map_select_btn.setGeometry(int(50 * self.scale_x), int(130 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.latlon_label.setGeometry(int(50 * self.scale_x), int(190 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.lon_label.setGeometry(int(50 * self.scale_x), int(220 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.lon_min_input.setGeometry(int(50 * self.scale_x), int(250 * self.scale_y), int(90 * self.scale_x), int(35 * self.scale_y))
+        self.lon_max_input.setGeometry(int(150 * self.scale_x), int(250 * self.scale_y), int(90 * self.scale_x), int(35 * self.scale_y))
+        self.lat_label.setGeometry(int(50 * self.scale_x), int(280 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.lat_min_input.setGeometry(int(50 * self.scale_x), int(310 * self.scale_y), int(90 * self.scale_x), int(35 * self.scale_y))
+        self.lat_max_input.setGeometry(int(150 * self.scale_x), int(310 * self.scale_y), int(90 * self.scale_x), int(35 * self.scale_y))
+        self.mode_label.setGeometry(int(50 * self.scale_x), int(380 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.mode_select_btn.setGeometry(int(50 * self.scale_x), int(420 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
+        self.status_label.setGeometry(int(950 * self.scale_x), int(270 * self.scale_y), int(280 * self.scale_x), int(40 * self.scale_y))
+
+    def resizeEvent(self, event):
+        # Recalculate scaling factors
+        new_width = self.width()
+        new_height = self.height()
+        self.scale_x = new_width / self.original_width
+        self.scale_y = new_height / self.original_height
+
+        # Update widget positions and sizes
+        self.update_widget_geometry()
+
+        # Call the parent class's resizeEvent
+        super().resizeEvent(event)
+        
 
         # Timer (updates every 100 ms).
         self.timer = QTimer()
@@ -77,20 +158,92 @@ class MyGui(QWidget):
         self.is_running = False
 
         # Define the start and goal positions for the robot.
-        self.start_pos = (80.0, 100.0)
-        self.goal_pos = (80.0, 60.0)
+        
 
-        # Modified vessel data handling.
-        self.data_from_file = vessel_saver.load_vessel_data('filtered_vessels')
+        # Vessel data will be initialized when a mode is selected.
+        self.raw_vessel_data = None
         self.vessel_groups = {}   # Dictionary to store vessels grouped by timestamp
         self.active_vessels = {}  # Dictionary to track currently active vessels (accumulated)
         self.current_time = 0     # Track simulation time
         self.next_spawn_time = 10 # Time until next vessel group (in seconds)
 
-        self.imazu_data = imazu1.get_data()
+        # Matplotlib artists.
+        self.background_image = None  # for the background image
+        self.vessel_plot = self.ax.scatter([], [], c='k', s=20)  # vessel obstacles
+        self.robot_plot = self.ax.scatter([], [], c='r', s=20, marker = 's')    # robot position
+        self.path_line, = self.ax.plot([], [], color='b', linewidth=2)  # robot path
+        self.start_marker = self.ax.scatter([], [], c='g', s=60, marker='o')
+        self.goal_marker = self.ax.scatter([], [], c='b', s=60, marker='x')
 
-        self.raw_vessel_data = self.data_from_file
+        # Connect button clicks.
+        self.start_btn.clicked.connect(self.on_start_dwa)
+        self.pause_btn.clicked.connect(self.on_pause_resume)
 
+        # Load the background image (if available).
+        
+        # self.update_graph()
+
+    def map_changed(self):
+        self.selected_map = self.map_select_btn.currentText()
+        self.lat_min = self.lat_min_input.text()
+        self.lat_max = self.lat_max_input.text()
+        self.lon_min = self.lon_min_input.text()
+        self.lon_max = self.lon_max_input.text()
+        if self.selected_map == "Singapore Straits":
+            lat_min = 1.13
+            lat_max = 1.22
+            lon_min = 103.75
+            lon_max = 103.85
+            map_generator.generate_map(lat_min, lat_max, lon_min, lon_max)
+            self.load_background_image("map.png")
+        elif self.selected_map == "Imazu Map":
+            lat_min = 1.13
+            lat_max = 1.22
+            lon_min = 103.51
+            lon_max = 103.6
+            map_generator.generate_map(lat_min, lat_max, lon_min, lon_max)
+            self.load_background_image("map.png")
+        elif self.selected_map == "":
+            map_generator.generate_map(self.lat_min, self.lat_max, self.lon_min, self.lon_max)
+            self.load_background_image("map.png")
+
+
+    def mode_changed(self):
+        """Handle mode change event."""
+        self.mode_selected = self.mode_select_btn.currentText()
+        
+        # Load and process vessel data based on the selected mode.
+        if self.mode_selected == "AIS":
+            self.raw_vessel_data = vessel_saver.load_vessel_data('filtered_vessels')
+            self.start_pos = (80.0, 100.0)
+            self.goal_pos = (80.0, 60.0)
+            print("AIS selected")
+        elif self.mode_selected == "Imazu 1":
+            self.start_pos = (45.0, 30.0)
+            self.goal_pos = (50.0, 70.0)
+            self.raw_vessel_data = vessel_saver.load_vessel_data('Imazu')
+        
+        # Define custom x and y labels
+        self.x_label = np.linspace(self.min_lon, self.max_lon, 6)  # Custom x-labels range
+        self.y_label = np.linspace(self.min_lat, self.max_lat, 5)  # Custom y-labels range
+
+        # Set x and y ticks on the axes, not on plt directly
+        self.ax.set_xticks(np.linspace(0, 100, len(self.x_label)))
+        self.ax.set_xticklabels([f"{v:.2f}" for v in self.x_label])
+
+        self.ax.set_yticks(np.linspace(0, 100, len(self.y_label)))
+        self.ax.set_yticklabels([f"{v:.2f}" for v in self.y_label])
+        self.ax.set_xlabel("Longitude Degrees")
+        self.ax.set_ylabel("Latitude Degrees")
+        # Initialize vessel data based on the selected mode.
+        # self.load_background_image("map.png")
+        self.initialize_vessel_data()
+        self.update_graph()
+
+    def initialize_vessel_data(self):
+        """Initialize vessel data based on the selected mode."""
+        if self.raw_vessel_data is None:
+            return  # No data to initialize
 
         # Create a dictionary to count IMO occurrences
         imo_count = {}
@@ -98,30 +251,7 @@ class MyGui(QWidget):
             imo = str(vessel[0])  # Convert IMO to string for consistency
             imo_count[imo] = imo_count.get(imo, 0) + 1
 
-            # Print any duplicates found
-            duplicates = {imo: count for imo, count in imo_count.items() if count > 1}
-            # if duplicates:
-            #     print("Found duplicate IMO numbers:")
-            #     for imo, count in duplicates.items():
-            #         print(f"IMO {imo} appears {count} times")
-            # else:
-            #     print("No duplicate IMO numbers found")
-
-        # Filter out duplicate vessels: keep only the first record per unique IMO
-        # unique_vessels = []
-        # for vessel in self.raw_vessel_data:
-        #     imo = vessel[0]
-
-        #     for i in imo:
-        #         if i not in unique_vessels:
-        #             index = imo.index(i)
-        #             for lst in vessel:
-        #                 del lst[index]
-        #     unique_vessels+= vessel
-        # # print(self.raw_vessel_data[:3])
-        # print(self.vessel_data[:3])
-
-    # Initialize a set to track seen IMOs and a list for unique vessels
+        # Initialize a set to track seen IMOs and a list for unique vessels
         seen_imos = set()
         unique_vessels = []
 
@@ -157,11 +287,6 @@ class MyGui(QWidget):
 
         self.vessel_data = unique_vessels
 
-        # print(self.raw_vessel_data[:3])
-        # print(self.vessel_data[:3])
-
-        
-
         # Group vessels by their timestamps.
         self.group_vessels_by_file()
         # Create a sorted list of timestamps (group keys).
@@ -171,22 +296,6 @@ class MyGui(QWidget):
 
         # Introduce the first group of vessels.
         self.introduce_initial_vessels()
-
-        # Matplotlib artists.
-        self.background_image = None  # for the background image
-        self.vessel_plot = self.ax.scatter([], [], c='k', s=20)  # vessel obstacles
-        self.robot_plot = self.ax.scatter([], [], c='r', s=20, marker = 's')    # robot position
-        self.path_line, = self.ax.plot([], [], color='b', linewidth=2)  # robot path
-        self.start_marker = self.ax.scatter([], [], c='g', s=60, marker='o')
-        self.goal_marker = self.ax.scatter([], [], c='b', s=60, marker='x')
-
-        # Connect button clicks.
-        self.start_btn.clicked.connect(self.on_start_dwa)
-        self.pause_btn.clicked.connect(self.on_pause_resume)
-
-        # Load the background image (if available).
-        self.load_background_image("map.png")
-        self.update_graph()
 
     ########################################################################
     # Load Background Image
@@ -280,7 +389,6 @@ class MyGui(QWidget):
             (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
             for vessel in self.active_vessels.values()
         ])
-        
         
         if len(current_obstacles) > 0:  # Only update if there are obstacles
             # Update DWA obstacles.
@@ -381,7 +489,6 @@ class MyGui(QWidget):
         for group, vessels in self.vessel_groups.items():
             print(f"Group {group}: {len(vessels)} vessels")
 
-
     def introduce_initial_vessels(self):
         """Introduce the first group of vessels."""
         if self.sorted_file:
@@ -423,8 +530,8 @@ class MyGui(QWidget):
             direction_scalar = get_first_coord(direction)
             file = get_first_coord(file_no)
             
-            new_x = x_scalar + speed_scalar*0.1 * math.cos(direction_scalar) * dt
-            new_y = y_scalar + speed_scalar*0.1 * math.sin(direction_scalar) * dt
+            new_x = x_scalar + speed_scalar * 0.1 * math.cos(direction_scalar) * dt
+            new_y = y_scalar + speed_scalar * 0.1 * math.sin(direction_scalar) * dt
             
             # Update the vessel's position in active_vessels.
             self.active_vessels[str(imo)] = [imo, timestamp, new_x, new_y, speed_scalar, direction_scalar, file]
