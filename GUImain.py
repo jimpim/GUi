@@ -15,6 +15,7 @@ import map_generator
 import vessel_filter
 import lonlat_converter
 import vessel_saver
+import imazudata
 
 
 
@@ -61,6 +62,8 @@ class MyGui(QWidget):
         # Initialize widgets
         self.init_ui()
 
+        
+
     def init_ui(self):
         # -- Matplotlib Figure and Canvas --
         self.figure = plt.Figure()
@@ -100,6 +103,15 @@ class MyGui(QWidget):
         self.status_label.setAlignment(Qt.AlignCenter)
 
         
+        for i in range(1, 23):
+
+            button = QPushButton(f"{i}", self)  # Create button
+            setattr(self, f"imazu_btn_{i}", button)  # Store button as attribute
+            button.hide()
+
+
+
+        
 
         # Connect signals
         self.map_select_btn.currentIndexChanged.connect(self.map_changed)
@@ -133,6 +145,24 @@ class MyGui(QWidget):
         self.mode_label.setGeometry(int(50 * self.scale_x), int(380 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
         self.mode_select_btn.setGeometry(int(50 * self.scale_x), int(420 * self.scale_y), int(180 * self.scale_x), int(35 * self.scale_y))
         self.status_label.setGeometry(int(950 * self.scale_x), int(270 * self.scale_y), int(280 * self.scale_x), int(40 * self.scale_y))
+        rows = 4  # Number of rows
+        cols = 6  # Number of columns
+        button_width = 30
+        button_height = 30
+        start_x = 25  # X position of the first button
+        start_y = 480  # Y position of the first button
+        spacing_x = 10  # Horizontal spacing
+        spacing_y = 10  # Vertical spacing   
+        for i in range(1,23):  
+            row = (i - 1) // cols  # Calculate row index
+            col = (i - 1) % cols  # Calculate column index
+            
+            x = start_x + col * (button_width + spacing_x)
+            y = start_y + row * (button_height + spacing_y)  
+            button = getattr(self, f"imazu_btn_{i}")
+            
+            button.setGeometry(int(x*self.scale_x), int(y*self.scale_y), int(button_width*self.scale_x), int(button_height*self.scale_y))  # Set position & size
+
 
     def resizeEvent(self, event):
         # Recalculate scaling factors
@@ -207,34 +237,53 @@ class MyGui(QWidget):
             map_generator.generate_map(self.lat_min, self.lat_max, self.lon_min, self.lon_max)
             self.load_background_image("map.png")
 
+    def on_button_clicked(self):
+        # Get the button that was clicked
+        button = self.sender()
+        self.button_selected = 0
+        if button:
+            # Extract the button number from its text or object name
+            self.button_number = int(button.text().split()[-1])
+            self.mode_changed()
+        
+        
 
     def mode_changed(self):
         """Handle mode change event."""
         self.mode_selected = self.mode_select_btn.currentText()
-        
+
         # Load and process vessel data based on the selected mode.
         if self.mode_selected == "AIS":
             self.raw_vessel_data = vessel_saver.load_vessel_data('filtered_vessels')
+            print(self.raw_vessel_data)
             self.start_pos = (80.0, 100.0)
             self.goal_pos = (80.0, 60.0)
             print("AIS selected")
+            self.x_label = np.linspace(self.min_lon, self.max_lon, 6)  # Custom x-labels range
+            self.y_label = np.linspace(self.min_lat, self.max_lat, 5)  # Custom y-labels range
+
+            # Set x and y ticks on the axes, not on plt directly
+            self.ax.set_xticks(np.linspace(0, 100, len(self.x_label)))
+            self.ax.set_xticklabels([f"{v:.2f}" for v in self.x_label])
+
+            self.ax.set_yticks(np.linspace(0, 100, len(self.y_label)))
+            self.ax.set_yticklabels([f"{v:.2f}" for v in self.y_label])
+            self.ax.set_xlabel("Longitude Degrees")
+            self.ax.set_ylabel("Latitude Degrees")
         elif self.mode_selected == "Imazu 1":
-            self.start_pos = (45.0, 30.0)
-            self.goal_pos = (50.0, 70.0)
-            self.raw_vessel_data = vessel_saver.load_vessel_data('Imazu')
-        
+            for i in range(1, 23):
+                button = getattr(self, f"imazu_btn_{i}")  # Store button as attribute
+                button.show()
+                button.clicked.connect(self.on_button_clicked)
+        if hasattr(self, 'button_number'):
+            print(f"Button {self.button_number} was clicked")
+            self.raw_vessel_data = imazudata.get_imazu(self.button_number)
+            self.start_pos = imazudata.get_start(self.button_number)
+            self.goal_pos = (50.0,100.0)
+ 
+
         # Define custom x and y labels
-        self.x_label = np.linspace(self.min_lon, self.max_lon, 6)  # Custom x-labels range
-        self.y_label = np.linspace(self.min_lat, self.max_lat, 5)  # Custom y-labels range
-
-        # Set x and y ticks on the axes, not on plt directly
-        self.ax.set_xticks(np.linspace(0, 100, len(self.x_label)))
-        self.ax.set_xticklabels([f"{v:.2f}" for v in self.x_label])
-
-        self.ax.set_yticks(np.linspace(0, 100, len(self.y_label)))
-        self.ax.set_yticklabels([f"{v:.2f}" for v in self.y_label])
-        self.ax.set_xlabel("Longitude Degrees")
-        self.ax.set_ylabel("Latitude Degrees")
+        
         # Initialize vessel data based on the selected mode.
         # self.load_background_image("map.png")
         self.initialize_vessel_data()
