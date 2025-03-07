@@ -17,8 +17,6 @@ import lonlat_converter
 import vessel_saver
 import imazudata
 
-
-
 def get_first_coord(coord):
     """
     If coord is a sequence (list, tuple, or numpy array), return its first element.
@@ -27,7 +25,6 @@ def get_first_coord(coord):
     if isinstance(coord, (list, tuple, np.ndarray)):
         return coord[0]
     return coord
-
 
 class MyGui(QWidget):
     def __init__(self):
@@ -62,8 +59,6 @@ class MyGui(QWidget):
         # Initialize widgets
         self.init_ui()
 
-        
-
     def init_ui(self):
         # -- Matplotlib Figure and Canvas --
         self.figure = plt.Figure()
@@ -72,46 +67,56 @@ class MyGui(QWidget):
         self.ax.set_aspect('equal', adjustable='box')
         self.ax.set_xlim(0, 100)
         self.ax.set_ylim(0, 100)
+        self.previous_robot_pos = None
 
         self.canvas.setParent(self)  # Manually manage it
+
+        # Initialize the arrow with empty data
+        self.direction_arrows = self.ax.quiver(
+        [0],
+        [0],
+        [0],
+        [0],
+        angles='uv',
+        scale_units='inches', #change to inches.
+        scale=5, #increase scale.
+        color='#20CC00', #change color.
+        headwidth=5, #increase head size.
+        headlength=4, #increase head size.
+        headaxislength=3, #increase head size. 
+        )
 
         # -- Manually Positioned Right-Side Widgets --
         self.start_btn = QPushButton("Start", self)
         self.pause_btn = QPushButton("Pause/Resume", self)
 
-        self.map_label = QLabel("Map Selection By Region Or Lon/Lat",self)
-        self.map_fixed_label = QLabel("Select Map By Region",self)
+        self.map_label = QLabel("Map Selection By Region Or Lon/Lat", self)
+        self.map_fixed_label = QLabel("Select Map By Region", self)
         self.map_select_btn = QComboBox(self)
-        self.map_select_btn.addItems(["","Singapore Straits","Imazu Map"])
-        self.lon_label = QLabel("Enter Longitude Range",self)
+        self.map_select_btn.addItems(["", "Singapore Straits", "Imazu Map"])
+        self.lon_label = QLabel("Enter Longitude Range", self)
         self.lon_min_input = QLineEdit(self)
         self.lon_min_input.setPlaceholderText("Min Lon")
         self.lon_max_input = QLineEdit(self)
         self.lon_max_input.setPlaceholderText("Max Lon")
 
-        self.latlon_label = QLabel("Select Map By Lon/Lat",self)
-        self.lat_label = QLabel("Enter Latitude Range",self)
+        self.latlon_label = QLabel("Select Map By Lon/Lat", self)
+        self.lat_label = QLabel("Enter Latitude Range", self)
         self.lat_min_input = QLineEdit(self)
         self.lat_min_input.setPlaceholderText("Min Lat")
         self.lat_max_input = QLineEdit(self)
         self.lat_max_input.setPlaceholderText("Max Lat")
 
-        self.mode_label = QLabel("Select Mode",self)
+        self.mode_label = QLabel("Select Mode", self)
         self.mode_select_btn = QComboBox(self)
         self.mode_select_btn.addItems(["", "AIS", "Imazu 1"])
         self.status_label = QLabel("Select map and click 'Start DWA' to begin.", self)
         self.status_label.setAlignment(Qt.AlignCenter)
 
-        
         for i in range(1, 23):
-
             button = QPushButton(f"{i}", self)  # Create button
             setattr(self, f"imazu_btn_{i}", button)  # Store button as attribute
             button.hide()
-
-
-
-        
 
         # Connect signals
         self.map_select_btn.currentIndexChanged.connect(self.map_changed)
@@ -152,17 +157,16 @@ class MyGui(QWidget):
         start_x = 25  # X position of the first button
         start_y = 480  # Y position of the first button
         spacing_x = 10  # Horizontal spacing
-        spacing_y = 10  # Vertical spacing   
-        for i in range(1,23):  
+        spacing_y = 10  # Vertical spacing
+        for i in range(1, 23):
             row = (i - 1) // cols  # Calculate row index
             col = (i - 1) % cols  # Calculate column index
-            
-            x = start_x + col * (button_width + spacing_x)
-            y = start_y + row * (button_height + spacing_y)  
-            button = getattr(self, f"imazu_btn_{i}")
-            
-            button.setGeometry(int(x*self.scale_x), int(y*self.scale_y), int(button_width*self.scale_x), int(button_height*self.scale_y))  # Set position & size
 
+            x = start_x + col * (button_width + spacing_x)
+            y = start_y + row * (button_height + spacing_y)
+            button = getattr(self, f"imazu_btn_{i}")
+
+            button.setGeometry(int(x * self.scale_x), int(y * self.scale_y), int(button_width * self.scale_x), int(button_height * self.scale_y))  # Set position & size
 
     def resizeEvent(self, event):
         # Recalculate scaling factors
@@ -176,7 +180,6 @@ class MyGui(QWidget):
 
         # Call the parent class's resizeEvent
         super().resizeEvent(event)
-        
 
         # Timer (updates every 100 ms).
         self.timer = QTimer()
@@ -188,19 +191,18 @@ class MyGui(QWidget):
         self.is_running = False
 
         # Define the start and goal positions for the robot.
-        
 
         # Vessel data will be initialized when a mode is selected.
         self.raw_vessel_data = None
-        self.vessel_groups = {}   # Dictionary to store vessels grouped by timestamp
+        self.vessel_groups = {}  # Dictionary to store vessels grouped by timestamp
         self.active_vessels = {}  # Dictionary to track currently active vessels (accumulated)
-        self.current_time = 0     # Track simulation time
-        self.next_spawn_time = 10 # Time until next vessel group (in seconds)
+        self.current_time = 0  # Track simulation time
+        self.next_spawn_time = 10  # Time until next vessel group (in seconds)
 
         # Matplotlib artists.
         self.background_image = None  # for the background image
         self.vessel_plot = self.ax.scatter([], [], c='k', s=20)  # vessel obstacles
-        self.robot_plot = self.ax.scatter([], [], c='r', s=20, marker = 's')    # robot position
+        self.robot_plot = self.ax.scatter([], [], c='r', s=20, marker='s')  # robot position
         self.path_line, = self.ax.plot([], [], color='b', linewidth=2)  # robot path
         self.start_marker = self.ax.scatter([], [], c='g', s=60, marker='o')
         self.goal_marker = self.ax.scatter([], [], c='b', s=60, marker='x')
@@ -210,8 +212,48 @@ class MyGui(QWidget):
         self.pause_btn.clicked.connect(self.on_pause_resume)
 
         # Load the background image (if available).
-        
+
         # self.update_graph()
+
+    def reset_plot(self):
+        """Resets the plot to its initial state."""
+        self.raw_vessel_data = None
+        self.ax.clear()  # Clear all axes content
+        
+        # Re-initialize the plot elements after clearing the axes
+        self.ax.set_aspect('equal', adjustable='box')
+        self.ax.set_xlim(0, 100)
+        self.ax.set_ylim(0, 100)
+
+        # Recreate all plot elements from scratch
+        self.background_image = None
+        self.vessel_plot = self.ax.scatter([], [], c='k', s=20)  # vessel obstacles
+        self.robot_plot = self.ax.scatter([], [], c='r', s=20, marker='s')  # robot position
+        self.path_line, = self.ax.plot([], [], color='b', linewidth=2)  # robot path
+        self.start_marker = self.ax.scatter([], [], c='g', s=60, marker='o')
+        self.goal_marker = self.ax.scatter([], [], c='b', s=60, marker='x')
+        
+        # Reinitialize the direction arrows
+        self.direction_arrows = self.ax.quiver(
+            [0],
+            [0],
+            [0],
+            [0],
+            angles='uv',
+            scale_units='inches',
+            scale=5,
+            color='#20CC00',
+            headwidth=5,
+            headlength=4,
+            headaxislength=3,
+        )
+        self.direction_arrows.set_visible(False)  # Hide the arrows initially
+        
+        # Reset tracking variables
+        self.previous_robot_pos = None
+        self.active_vessels = {}  # Clear any active vessels
+        
+        self.canvas.draw()  # Redraw the canvas
 
     def map_changed(self):
         self.selected_map = self.map_select_btn.currentText()
@@ -244,20 +286,25 @@ class MyGui(QWidget):
         if button:
             # Extract the button number from its text or object name
             self.button_number = int(button.text().split()[-1])
-            self.mode_changed()
-        
-        
+            print(f"Button {self.button_number} was clicked")
+        if hasattr(self, 'button_number'):
+            # print(f"Button {self.button_number} was clicked")
+            self.raw_vessel_data = imazudata.get_imazu(self.button_number)
+            self.start_pos = imazudata.get_start(self.button_number)
+            self.goal_pos = (50.0, 100.0)
+        self.initialize_vessel_data()
+        self.update_graph()
 
     def mode_changed(self):
-        """Handle mode change event."""
+        self.reset_plot()
         self.mode_selected = self.mode_select_btn.currentText()
 
         # Load and process vessel data based on the selected mode.
         if self.mode_selected == "AIS":
             self.raw_vessel_data = vessel_saver.load_vessel_data('filtered_vessels')
             print(self.raw_vessel_data)
-            self.start_pos = (80.0, 100.0)
-            self.goal_pos = (80.0, 60.0)
+            self.start_pos = (75.0, 90.0)
+            self.goal_pos = (90.0, 55.0)
             print("AIS selected")
             self.x_label = np.linspace(self.min_lon, self.max_lon, 6)  # Custom x-labels range
             self.y_label = np.linspace(self.min_lat, self.max_lat, 5)  # Custom y-labels range
@@ -271,20 +318,12 @@ class MyGui(QWidget):
             self.ax.set_xlabel("Longitude Degrees")
             self.ax.set_ylabel("Latitude Degrees")
         elif self.mode_selected == "Imazu 1":
+
             for i in range(1, 23):
                 button = getattr(self, f"imazu_btn_{i}")  # Store button as attribute
                 button.show()
                 button.clicked.connect(self.on_button_clicked)
-        if hasattr(self, 'button_number'):
-            print(f"Button {self.button_number} was clicked")
-            self.raw_vessel_data = imazudata.get_imazu(self.button_number)
-            self.start_pos = imazudata.get_start(self.button_number)
-            self.goal_pos = (50.0,100.0)
- 
 
-        # Define custom x and y labels
-        
-        # Initialize vessel data based on the selected mode.
         # self.load_background_image("map.png")
         self.initialize_vessel_data()
         self.update_graph()
@@ -307,7 +346,7 @@ class MyGui(QWidget):
         for record in self.raw_vessel_data:
             # Number of vessels in this record
             num_vessels = len(record[0])
-            
+
             # Temporary lists for the current record's unique vessels
             imolst = []
             timestamp_list = []
@@ -316,7 +355,7 @@ class MyGui(QWidget):
             speed = []
             direction = []
             file_no = []
-            
+
             for i in range(num_vessels):
                 current_imo = str(record[0][i])
                 # If we haven't seen this IMO before, add its data
@@ -329,7 +368,7 @@ class MyGui(QWidget):
                     speed.append(record[4][i])
                     direction.append(record[5][i])
                     file_no.append(record[6][i])
-                    
+
             # Only append non-empty records
             if imolst:
                 unique_vessels.append((imolst, timestamp_list, x_coords, y_coords, speed, direction, file_no))
@@ -395,17 +434,17 @@ class MyGui(QWidget):
         """Update the vessel obstacles and start/goal markers."""
         if self.active_vessels:  # Only proceed if there are active vessels
             current_positions = np.array([
-            (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
-            for vessel in self.active_vessels.values()
-        ])
+                (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
+                for vessel in self.active_vessels.values()
+            ])
             # for vessel in self.active_vessels.values():
             #     x = get_first_coord(vessel[2])  # x coordinate
             #     y = get_first_coord(vessel[3])  # y coordinate
             #     current_positions.append([x, y])
-            
+
             current_positions = np.array(current_positions)
             print(f"Plotting {len(current_positions)} vessels")
-            
+
             self.vessel_plot.set_offsets(current_positions)
             self.start_marker.set_offsets([self.start_pos])
             self.goal_marker.set_offsets([self.goal_pos])
@@ -420,42 +459,71 @@ class MyGui(QWidget):
         if not self.is_running or self.dwa_handler is None:
             return
 
-        # Update simulation time
-        dt = self.timer.interval() / 1000.0  # dt in seconds
+        dt = self.timer.interval() / 1000.0
         self.current_time += dt
 
-        # Check if it's time to introduce new vessels
         if self.current_time >= self.next_spawn_time:
             print(f"Current time: {self.current_time}, spawning new vessels")
             self.introduce_new_vessels()
-            self.next_spawn_time += 10  # Set time for the next spawn
+            self.next_spawn_time += 10
 
-        # Update positions of active vessels
         self.move_obstacles()
 
-        # Extract current positions of active vessels
         current_obstacles = np.array([
             (get_first_coord(vessel[2]), get_first_coord(vessel[3]))
             for vessel in self.active_vessels.values()
         ])
-        
-        if len(current_obstacles) > 0:  # Only update if there are obstacles
-            # Update DWA obstacles.
-            self.dwa_handler.ob = current_obstacles
-            
-            # Execute one DWA step.
-            x, reached = self.dwa_handler.step()
-            # Update the robot's position and its trajectory.
-            self.robot_plot.set_offsets([[x[0], x[1]]])
-            traj_arr = np.array(self.dwa_handler.trajectory)
-            if traj_arr.size > 0:
-                self.path_line.set_data(traj_arr[:, 0], traj_arr[:, 1])
 
-            # Update the vessel (obstacle) plot.
+        if len(current_obstacles) > 0:
+            self.dwa_handler.ob = current_obstacles
+
+            x, reached = self.dwa_handler.step()
+
+            if x is not None:
+                self.robot_plot.set_offsets([[x[0], x[1]]])
+                traj_arr = np.array(self.dwa_handler.trajectory)
+                if traj_arr.size > 0:
+                    self.path_line.set_data(traj_arr[:, 0], traj_arr[:, 1])
+
+                current_robot_pos = (x[0], x[1])
+
+                if self.previous_robot_pos is not None:
+                    dx = current_robot_pos[0] - self.previous_robot_pos[0]
+                    dy = current_robot_pos[1] - self.previous_robot_pos[1]
+
+                    if dx != 0 or dy != 0:
+                        robot_angle_rad = math.atan2(dy, dx)
+                        u = math.cos(robot_angle_rad)
+                        v = math.sin(robot_angle_rad)
+
+                        # Set the arrow's origin and direction vector
+                        self.direction_arrows.set_offsets([current_robot_pos])
+                        self.direction_arrows.set_UVC([u], [v])  # UVC should be lists
+                        self.direction_arrows.set_visible(True)
+
+                        # print(f"direction_arrows offsets: {self.direction_arrows.get_offsets()}")
+                        # print(f"direction_arrows visibility: {self.direction_arrows.get_visible()}")
+                        self.canvas.draw()
+                else:
+                    # On the first step, use the angle from DWA
+                    u = math.cos(x[2])
+                    v = math.sin(x[2])
+
+                    # Set the arrow's origin and direction vector
+                    self.direction_arrows.set_offsets([current_robot_pos])
+                    self.direction_arrows.set_UVC([u], [v])  # UVC should be lists
+                    self.direction_arrows.set_visible(True)
+
+                    self.canvas.draw()
+
+                self.previous_robot_pos = current_robot_pos  # Update previous position
+
+            else:
+                print("DWA step returned None")
+
             self.vessel_plot.set_offsets(current_obstacles)
             self.canvas.draw()
 
-            # Check if the goal has been reached.
             if reached:
                 self.status_label.setText("Goal reached!")
                 self.is_running = False
@@ -491,6 +559,7 @@ class MyGui(QWidget):
 
         self.is_running = True
         self.status_label.setText("DWA running...")
+        self.direction_arrows.set_visible(True)  # Show arrow when DWA starts
 
         if not self.timer.isActive():
             self.timer.start()
@@ -499,15 +568,17 @@ class MyGui(QWidget):
         if self.timer.isActive():
             self.timer.stop()
             self.status_label.setText("Paused.")
+            self.direction_arrows.set_visible(False)
         else:
             if self.is_running:
                 self.timer.start()
                 self.status_label.setText("DWA running...")
+                self.direction_arrows.set_visible(True)
 
     ########################################################################
     # Vessel Grouping and Introduction
     ########################################################################
-    
+
     def group_vessels_by_file(self):
         """Group vessels by their actual timestamps,
         saving each vessel individually under its own IMO.
@@ -521,11 +592,11 @@ class MyGui(QWidget):
             group_key = get_first_coord(record[6])
             if group_key not in self.vessel_groups:
                 self.vessel_groups[group_key] = {}
-            
+
             # Determine how many vessels are in this record.
             # (We assume all attribute lists in the tuple are of the same length.)
             num_vessels = len(record[0])
-            
+
             # For each vessel in this record, create a vessel-specific data tuple
             # and save it using its IMO as the key.
             for i in range(num_vessels):
@@ -555,7 +626,7 @@ class MyGui(QWidget):
             new_vessels = self.vessel_groups[next_file]
             print(f"Introducing vessels from timestamp {next_file}")
             print(f"Number of vessels in new group: {len(new_vessels)}")
-            
+
             # Accumulate the new vessels with the previously active ones.
             self.active_vessels.update(new_vessels)
             print(f"Total active vessels after accumulation: {len(self.active_vessels)}")
@@ -570,7 +641,7 @@ class MyGui(QWidget):
     def move_obstacles(self):
         """Update positions of active vessels."""
         dt = self.timer.interval() / 1000.0
-        
+
         for imo, vessel in list(self.active_vessels.items()):
             imo, timestamp, x, y, speed, direction, file_no = vessel
             x_scalar = get_first_coord(x)
@@ -578,10 +649,10 @@ class MyGui(QWidget):
             speed_scalar = get_first_coord(speed)
             direction_scalar = get_first_coord(direction)
             file = get_first_coord(file_no)
-            
+
             new_x = x_scalar + speed_scalar * 0.1 * math.cos(direction_scalar) * dt
             new_y = y_scalar + speed_scalar * 0.1 * math.sin(direction_scalar) * dt
-            
+
             # Update the vessel's position in active_vessels.
             self.active_vessels[str(imo)] = [imo, timestamp, new_x, new_y, speed_scalar, direction_scalar, file]
 
