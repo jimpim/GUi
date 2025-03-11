@@ -1,0 +1,112 @@
+@startuml
+
+left to right direction
+
+class QWidget {
+}
+
+class MyGui extends QWidget {
+    - main_layout : QHBoxLayout
+    - right_panel : QVBoxLayout
+    - figure : plt.Figure
+    - canvas : FigureCanvas
+    - ax : Axes
+    - timer : QTimer
+    - dwa_handler : DWAHandler
+    - obstacles : numpy.ndarray
+    - obstacle_vels : numpy.ndarray
+    - start_pos : tuple
+    - goal_pos : tuple
+    - background_image : QImage
+    - obstacle_plot : matplotlib.collections.PathCollection
+    - robot_plot : matplotlib.collections.PathCollection
+    - path_line : matplotlib.lines.Line2D
+    - start_marker : matplotlib.collections.PathCollection
+    - goal_marker : matplotlib.collections.PathCollection
+
+    + __init__()
+    + load_background_image(img_path: string)
+    + move_obstacles()
+    + update_graph()
+    + on_start_dwa()
+    + on_pause_resume()
+    + update_step()
+}
+
+class Config {
+    - max_speed : float
+    - min_speed : float
+    - max_yaw_rate : float
+    - max_accel : float
+    - max_delta_yaw_rate : float
+    - v_resolution : float
+    - yaw_rate_resolution : float
+    - dt : float
+    - predict_time : float
+    - to_goal_cost_gain : float
+    - speed_cost_gain : float
+    - obstacle_cost_gain : float
+    - goal_tolerance : float
+    - robot_stuck_flag_cons : float
+
+    + __init()
+}
+
+class DWAHandler {
+    - x : numpy.ndarray
+    - goal : numpy.ndarray
+    - ob : numpy.ndarray
+    - config : Config
+    - trajectory : list
+
+    + __init__(x_init : numpy.ndarray, goal : numpy.ndarray, ob : numpy.ndarray)
+    + step() : tuple
+}
+
+class Node {
+    - x : int
+    - y : int
+    - cost : float
+    - parent_index : int
+
+    + __init__(x : int, y : int, cost : float, parent_index : int)
+}
+
+class AStarPlanner {
+    - ob : numpy.ndarray
+    - resolution : float
+    - rr : float
+    - min_x : float
+    - min_y : float
+    - max_x : float
+    - max_y : float
+    - obstacle_map : boolean[][]
+    - x_width : int
+    - y_width : int
+    - motion : tuple[]
+
+    + __init__(ob : numpy.ndarray, resolution : float, rr : float, min_x : float, min_y : float, max_x : float, max_y : float)
+    + planning(sx : float, sy : float, gx : float, gy : float) : tuple
+    + calc_final_path(goal_node : Node, closed_set : dict) : list
+    + calc_obstacle_map()
+    + verify_node(node : Node) : boolean
+}
+
+AStarPlanner *-- "contains" Node
+
+class run_a_star {
+    {static} + run_a_star(ob : numpy.ndarray, sx : float, sy : float, gx : float, gy : float, resolution : float, robot_radius : float) : tuple
+}
+
+run_a_star ..> AStarPlanner : uses >
+run_a_star : returns path coordinates (rx, ry)
+
+MyGui ..> run_a_star : inputs start, goal, obstacles
+run_a_star --> MyGui : path (rx, ry)
+
+MyGui ..> DWAHandler : inputs initial state, goal, obstacles
+DWAHandler --> MyGui : updates state, path
+
+Config "1" *-- "1" DWAHandler
+
+@enduml
